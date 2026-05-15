@@ -324,7 +324,28 @@ class AtomDiffusion(Module):
         steering_args=None,
         **network_condition_kwargs,
     ):
-        if steering_args is not None and (
+        default_steering_args = {
+            "fk_steering": False,
+            "num_particles": 1,
+            "fk_lambda": 0.0,
+            "fk_resampling_interval": 1,
+            "physical_guidance_update": False,
+            "contact_guidance_update": False,
+            "num_gd_steps": 1,
+        }
+        if steering_args is None:
+            steering_args = default_steering_args
+        else:
+            unknown_args = set(steering_args) - set(default_steering_args)
+            if unknown_args:
+                unknown = ", ".join(sorted(unknown_args))
+                raise ValueError(f"Unknown steering_args key(s): {unknown}")
+            steering_args = {
+                key: steering_args.get(key, value)
+                for key, value in default_steering_args.items()
+            }
+
+        if (
             steering_args["fk_steering"]
             or steering_args["physical_guidance_update"]
             or steering_args["contact_guidance_update"]

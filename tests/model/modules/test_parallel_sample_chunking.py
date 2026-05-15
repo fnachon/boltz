@@ -111,3 +111,34 @@ def test_v2_sampling_defaults_max_parallel_samples_to_multiplicity(
 
     assert result["sample_atom_coords"].shape[0] == multiplicity
     assert call_sizes == [multiplicity, multiplicity]
+
+
+def test_v2_sampling_accepts_missing_steering_args(v2_atom_diffusion_factory):
+    call_sizes = []
+    diffusion = v2_atom_diffusion_factory(call_sizes)
+
+    result = diffusion.sample(
+        atom_mask=torch.ones(1, 4),
+        multiplicity=2,
+        max_parallel_samples=None,
+        num_sampling_steps=2,
+        feats={},
+        steering_args=None,
+    )
+
+    assert result["sample_atom_coords"].shape[0] == 2
+    assert call_sizes == [2, 2]
+
+
+def test_v2_sampling_rejects_unknown_steering_args(v2_atom_diffusion_factory):
+    diffusion = v2_atom_diffusion_factory([])
+
+    with pytest.raises(ValueError, match="Unknown steering_args key"):
+        diffusion.sample(
+            atom_mask=torch.ones(1, 4),
+            multiplicity=2,
+            max_parallel_samples=None,
+            num_sampling_steps=2,
+            feats={},
+            steering_args={"fk_steeering": True},
+        )
