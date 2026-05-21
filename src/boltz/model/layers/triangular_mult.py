@@ -1,3 +1,6 @@
+import warnings
+from typing import Optional
+
 import torch
 from torch import Tensor, nn
 
@@ -34,6 +37,43 @@ def kernel_triangular_mult(
         g_out_weight=g_out_weight,
         eps=eps,
     )
+
+
+# The cuequivariance triangle multiplication op is shared by both incoming and
+# outgoing layers. Once it fails, skip both kernel paths for the rest of the
+# process to avoid repeatedly raising and warning on the same unavailable op.
+_kernel_failure = {"reason": None}
+
+
+def _is_recoverable_kernel_error(error: Exception) -> bool:
+    if isinstance(error, ImportError):
+        return True
+    msg = str(error)
+    return (
+        "triangle_multiplicative_update" in msg
+        and (
+            "Failed to import Triton-based component" in msg
+            or "Not Supported" in msg
+        )
+    )
+
+
+def _kernel_or_none(**kwargs: object) -> Optional[Tensor]:
+    if _kernel_failure["reason"] is not None:
+        return None
+    try:
+        return kernel_triangular_mult(**kwargs)
+    except Exception as error:  # noqa: BLE001
+        if not _is_recoverable_kernel_error(error):
+            raise
+        _kernel_failure["reason"] = str(error)
+        warnings.warn(
+            "Triangle multiplication kernels are unavailable; falling back to "
+            f"the PyTorch implementation. Kernel error: {_kernel_failure['reason']}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return None
 
 
 class TriangleMultiplicationOutgoing(nn.Module):
@@ -89,8 +129,8 @@ class TriangleMultiplicationOutgoing(nn.Module):
 
         """
         if use_kernels:
-            return kernel_triangular_mult(
-                x,
+            kernel_out = _kernel_or_none(
+                x=x,
                 direction="outgoing",
                 mask=mask,
                 norm_in_weight=self.norm_in.weight,
@@ -103,6 +143,8 @@ class TriangleMultiplicationOutgoing(nn.Module):
                 g_out_weight=self.g_out.weight,
                 eps=1e-5,
             )
+            if kernel_out is not None:
+                return kernel_out
 
         # Input gating: D -> D
         x = self.norm_in(x)
@@ -177,8 +219,8 @@ class TriangleMultiplicationIncoming(nn.Module):
 
         """
         if use_kernels:
-            return kernel_triangular_mult(
-                x,
+            kernel_out = _kernel_or_none(
+                x=x,
                 direction="incoming",
                 mask=mask,
                 norm_in_weight=self.norm_in.weight,
@@ -191,6 +233,8 @@ class TriangleMultiplicationIncoming(nn.Module):
                 g_out_weight=self.g_out.weight,
                 eps=1e-5,
             )
+            if kernel_out is not None:
+                return kernel_out
 
         # Input gating: D -> D
         x = self.norm_in(x)

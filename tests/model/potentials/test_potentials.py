@@ -10,6 +10,7 @@ from boltz.model.potentials.potentials import (
     FlatBottomPotential,
     DihedralPotential,
     ConnectionsPotential,
+    ContactPotentital,
     get_potentials,
 )
 
@@ -172,6 +173,126 @@ class TestGetPotentials:
         type_names = [type(p).__name__ for p in potentials]
         assert "ContactPotentital" in type_names
         assert "TemplateReferencePotential" in type_names
+
+
+class TestUnionContactPotential:
+    """Union contact weighting should remain active for large violations."""
+
+    def test_union_energy_does_not_underflow_to_zero(self) -> None:
+        """Large positive contact violations keep finite union energy."""
+        pot = ContactPotentital()
+        coords = torch.tensor(
+            [
+                [
+                    [0.0, 0.0, 0.0],
+                    [100.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [110.0, 0.0, 0.0],
+                ]
+            ]
+        )
+        feats = {
+            "contact_pair_index": torch.tensor([[[0, 2], [1, 3]]]),
+            "contact_union_index": torch.tensor([[0, 0]]),
+            "contact_negation_mask": torch.tensor([[True, True]]),
+            "contact_thresholds": torch.tensor([[1.0, 1.0]]),
+        }
+
+        energy = pot.compute(coords, feats, {"union_lambda": 8.0})
+
+        assert torch.isfinite(energy).all()
+        assert energy.item() > 90.0  # noqa: PLR2004
+
+    def test_union_gradient_does_not_underflow_to_zero(self) -> None:
+        """Large positive contact violations keep nonzero union gradients."""
+        pot = ContactPotentital()
+        coords = torch.tensor(
+            [
+                [
+                    [0.0, 0.0, 0.0],
+                    [100.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [110.0, 0.0, 0.0],
+                ]
+            ]
+        )
+        feats = {
+            "contact_pair_index": torch.tensor([[[0, 2], [1, 3]]]),
+            "contact_union_index": torch.tensor([[0, 0]]),
+            "contact_negation_mask": torch.tensor([[True, True]]),
+            "contact_thresholds": torch.tensor([[1.0, 1.0]]),
+        }
+
+        grad = pot.compute_gradient(coords, feats, {"union_lambda": 8.0})
+
+        assert torch.isfinite(grad).all()
+        assert grad.abs().sum().item() > 0.0  # noqa: PLR2004
+
+    def test_union_gradient_matches_finite_difference(self) -> None:
+        """Union contact gradient matches a directional finite difference."""
+        pot = ContactPotentital()
+        coords = torch.tensor(
+            [
+                [
+                    [0.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [5.0, 1.0, 0.0],
+                ]
+            ],
+            dtype=torch.float64,
+        )
+        direction = torch.tensor(
+            [
+                [
+                    [0.1, -0.2, 0.0],
+                    [0.3, 0.1, 0.0],
+                    [-0.2, 0.0, 0.0],
+                    [0.4, -0.1, 0.0],
+                ]
+            ],
+            dtype=torch.float64,
+        )
+        feats = {
+            "contact_pair_index": torch.tensor([[[0, 2], [1, 3]]]),
+            "contact_union_index": torch.tensor([[0, 0]]),
+            "contact_negation_mask": torch.tensor([[True, True]]),
+            "contact_thresholds": torch.tensor([[1.0, 1.0]], dtype=torch.float64),
+        }
+        params = {"union_lambda": 0.3}
+        eps = 1e-6
+
+        grad = pot.compute_gradient(coords, feats, params)
+        analytic = (grad * direction).sum()
+        finite_diff = (
+            pot.compute(coords + eps * direction, feats, params).sum()
+            - pot.compute(coords - eps * direction, feats, params).sum()
+        ) / (2 * eps)
+
+        assert analytic.item() == pytest.approx(finite_diff.item(), abs=1e-5)
+
+    def test_union_rejects_negative_indices(self) -> None:
+        """Union indices must not use negative sentinel values."""
+        pot = ContactPotentital()
+        coords = torch.tensor(
+            [
+                [
+                    [0.0, 0.0, 0.0],
+                    [3.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [5.0, 1.0, 0.0],
+                ]
+            ]
+        )
+        feats = {
+            "contact_pair_index": torch.tensor([[[0, 2], [1, 3]]]),
+            "contact_union_index": torch.tensor([[0, -1]]),
+            "contact_negation_mask": torch.tensor([[True, True]]),
+            "contact_thresholds": torch.tensor([[1.0, 1.0]]),
+        }
+
+        with pytest.raises(ValueError, match="non-negative"):
+            pot.compute(coords, feats, {"union_lambda": 0.3})
 
 
 class TestBfloat16Potential:

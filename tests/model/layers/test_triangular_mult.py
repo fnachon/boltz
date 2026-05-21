@@ -1,11 +1,12 @@
 """Tests for boltz.model.layers.triangular_mult — TriangleMultiplicationOutgoing/Incoming."""
 
-import torch
 import pytest
+import torch
 
+from boltz.model.layers import triangular_mult
 from boltz.model.layers.triangular_mult import (
-    TriangleMultiplicationOutgoing,
     TriangleMultiplicationIncoming,
+    TriangleMultiplicationOutgoing,
 )
 
 
@@ -104,3 +105,73 @@ class TestTriangleMultiplication:
             out1 = outgoing(x, mask)
             out2 = outgoing(x, mask)
         assert torch.allclose(out1, out2, atol=1e-8)
+
+    def test_kernel_failure_falls_back_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        outgoing: TriangleMultiplicationOutgoing,
+        dim: int,
+    ) -> None:
+        """Recoverable kernel errors fall back and are not retried."""
+        calls = []
+
+        def fail_kernel(**kwargs: object) -> None:
+            calls.append(kwargs["direction"])
+            message = (
+                "Failed to import Triton-based component: "
+                "triangle_multiplicative_update:\nNot Supported"
+            )
+            raise Exception(message)  # noqa: TRY002
+
+        monkeypatch.setitem(
+            triangular_mult._kernel_failure,  # noqa: SLF001
+            "reason",
+            None,
+        )
+        monkeypatch.setattr(triangular_mult, "kernel_triangular_mult", fail_kernel)
+
+        batch, num_tokens = 1, 6
+        x = torch.randn(batch, num_tokens, num_tokens, dim)
+        mask = torch.ones(batch, num_tokens, num_tokens)
+
+        with pytest.warns(RuntimeWarning, match="falling back"):
+            out1 = outgoing(x, mask, use_kernels=True)
+        out2 = outgoing(x, mask, use_kernels=True)
+
+        assert out1.shape == (batch, num_tokens, num_tokens, dim)
+        assert out2.shape == (batch, num_tokens, num_tokens, dim)
+        assert calls == ["outgoing"]
+
+        incoming = TriangleMultiplicationIncoming(dim=dim)
+        incoming.eval()
+        out3 = incoming(x, mask, use_kernels=True)
+
+        assert out3.shape == (batch, num_tokens, num_tokens, dim)
+        assert calls == ["outgoing"]
+
+    def test_unexpected_kernel_failure_is_not_suppressed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        outgoing: TriangleMultiplicationOutgoing,
+        dim: int,
+    ) -> None:
+        """Unexpected kernel errors still surface."""
+
+        def fail_kernel(**kwargs: object) -> None:
+            del kwargs
+            message = "some unrelated CUDA operation is Not Supported"
+            raise RuntimeError(message)
+
+        monkeypatch.setitem(
+            triangular_mult._kernel_failure,  # noqa: SLF001
+            "reason",
+            None,
+        )
+        monkeypatch.setattr(triangular_mult, "kernel_triangular_mult", fail_kernel)
+
+        batch, num_tokens = 1, 6
+        x = torch.randn(batch, num_tokens, num_tokens, dim)
+        mask = torch.ones(batch, num_tokens, num_tokens)
+
+        with pytest.raises(RuntimeError, match="unrelated CUDA operation"):
+            outgoing(x, mask, use_kernels=True)

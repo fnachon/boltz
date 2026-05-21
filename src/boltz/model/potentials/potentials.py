@@ -12,6 +12,42 @@ from boltz.model.potentials.schedules import (
 from boltz.model.loss.diffusionv2 import weighted_rigid_align
 
 
+def _normalize_union_index(
+    energy: torch.Tensor,
+    union_index: torch.Tensor,
+) -> torch.Tensor:
+    """Return union indices on the energy device, expanded to energy shape."""
+    union_index = union_index.to(device=energy.device, dtype=torch.long)
+    union_index = union_index.expand_as(energy)
+    if not torch.all(union_index >= 0):
+        raise ValueError("union_index must be non-negative")
+    return union_index
+
+
+def _stable_union_weights(
+    energy: torch.Tensor,
+    union_index: torch.Tensor,
+    union_lambda: float,
+) -> torch.Tensor:
+    """Compute union weights without underflowing on large violations."""
+    scaled_energy = -union_lambda * energy
+    num_unions = int(union_index.max().item()) + 1
+    group_max = torch.full(
+        (*energy.shape[:-1], num_unions),
+        float("-inf"),
+        device=energy.device,
+        dtype=energy.dtype,
+    ).scatter_reduce(-1, union_index, scaled_energy, "amax")
+    shifted_energy = scaled_energy - group_max.gather(-1, union_index)
+    exp_energy = torch.exp(shifted_energy)
+    group_sum = torch.zeros(
+        (*energy.shape[:-1], num_unions),
+        device=energy.device,
+        dtype=energy.dtype,
+    ).scatter_reduce(-1, union_index, exp_energy, "sum")
+    return exp_energy / group_sum.gather(-1, union_index)
+
+
 class Potential(ABC):
     def __init__(
         self,
@@ -73,17 +109,12 @@ class Potential(ABC):
         )
 
         if union_index is not None:
-            neg_exp_energy = torch.exp(-1 * parameters["union_lambda"] * energy)
-            Z = torch.zeros(
-                (*energy.shape[:-1], union_index.max() + 1), device=union_index.device
-            ).scatter_reduce(
-                -1,
-                union_index.expand_as(neg_exp_energy),
-                neg_exp_energy,
-                "sum",
+            union_index = _normalize_union_index(energy, union_index)
+            softmax_energy = _stable_union_weights(
+                energy,
+                union_index,
+                parameters["union_lambda"],
             )
-            softmax_energy = neg_exp_energy / Z[..., union_index]
-            softmax_energy[Z[..., union_index] == 0] = 0
             return (energy * softmax_energy).sum(dim=-1)
 
         return energy.sum(dim=tuple(range(1, energy.dim())))
@@ -136,33 +167,32 @@ class Potential(ABC):
             compute_gradient=True,
         )
         energy, dEnergy = self.compute_function(
-            value, 
+            value,
             *args, negation_mask=negation_mask, compute_derivative=True
         )
         if union_index is not None:
-            neg_exp_energy = torch.exp(-1 * parameters["union_lambda"] * energy)
-            Z = torch.zeros(
-                (*energy.shape[:-1], union_index.max() + 1), device=union_index.device
-            ).scatter_reduce(
-                -1,
-                union_index.expand_as(energy),
-                neg_exp_energy,
-                "sum",
+            union_index = _normalize_union_index(energy, union_index)
+            softmax_energy = _stable_union_weights(
+                energy,
+                union_index,
+                parameters["union_lambda"],
             )
-            softmax_energy = neg_exp_energy / Z[..., union_index]
-            softmax_energy[Z[..., union_index] == 0] = 0
+            num_unions = int(union_index.max().item()) + 1
             f = torch.zeros(
-                (*energy.shape[:-1], union_index.max() + 1), device=union_index.device
+                (*energy.shape[:-1], num_unions),
+                device=energy.device,
+                dtype=energy.dtype,
             ).scatter_reduce(
                 -1,
-                union_index.expand_as(energy),
+                union_index,
                 energy * softmax_energy,
                 "sum",
             )
+            union_energy = f.gather(-1, union_index)
             dSoftmax = (
                 dEnergy
                 * softmax_energy
-                * (1 + parameters["union_lambda"] * (energy - f[..., union_index]))
+                * (1 + parameters["union_lambda"] * (union_energy - energy))
             )
             prod = dSoftmax.tile(grad_value.shape[-3]).unsqueeze(
                 -1
