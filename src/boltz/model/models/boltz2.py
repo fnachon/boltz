@@ -111,6 +111,7 @@ class Boltz2(LightningModule):
 
         # No random recycling
         self.no_random_recycling_training = no_random_recycling_training
+        self.validate_structure = validate_structure
 
         if validate_structure:
             # Late init at setup time

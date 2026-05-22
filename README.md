@@ -55,6 +55,7 @@ Community-maintained fork of [Boltz](https://github.com/jwohlwend/boltz) with bu
 - Fixed MSA discarded as "does not match input sequence" when pre-computed MSAs are aligned to a full UniProt sequence but the input uses a shorter PDB construct — Boltz now finds the construct as a contiguous subsequence within the MSA query and trims all MSA rows accordingly, instead of falling back to a dummy single-sequence MSA. Tolerates up to 5% mismatches (selenomethionine substitutions, expression tags, minor construct mutations). Applies to both Boltz-1 and Boltz-2.
 - Fixed PDB templates crashing with `IndexError: list index out of range` when Gemmi drops entity sequence metadata during PDB→mmCIF conversion — template parsing now falls back to the observed polymer residues, and relative template `pdb`/`cif` paths are resolved from the YAML file directory instead of the current working directory ([#669](https://github.com/jwohlwend/boltz/issues/669))
 - Fixed YAML `bond` constraints for custom cross-residue covalent bonds (for example ACE-CY3 cyclization) missing atom-level bond-length bounds for physical guidance and `_struct_conn` records in mmCIF output ([#675](https://github.com/jwohlwend/boltz/issues/675))
+- Fixed Boltz-2 fine-tuning/validation crashes when downstream methods read `self.validate_structure`; the constructor now stores the `validate_structure` argument on the model ([novel-therapeutics/boltz-community#11](https://github.com/Novel-Therapeutics/boltz-community/issues/11))
 
 **Improvements:**
 - Added `--skip_bad_inputs` flag: by default `boltz predict` now aborts when any input fails processing; pass `--skip_bad_inputs` to skip bad inputs and continue with the rest
@@ -71,7 +72,7 @@ Community-maintained fork of [Boltz](https://github.com/jwohlwend/boltz) with bu
 - `process_atom_features` pre-allocates output arrays and fills `atom_to_token` in one slice per token (eliminates per-atom appends)
 
 **Tests & CI:**
-- 190+ tests: unit tests (CPU), smoke tests (end-to-end inference), regression tests (golden output verification for Boltz-1 and Boltz-2), determinism tests, MSA trim subsequence matching (8 cases), diffusion chunking regression tests, and featurizer pre-allocation correctness
+- 266 tests in this fork vs. 5 tests in current upstream `jwohlwend/boltz`: unit tests (CPU), smoke tests (end-to-end inference), regression tests (golden output verification for Boltz-1 and Boltz-2), determinism tests, MSA trim subsequence matching (8 cases), diffusion chunking regression tests, Boltz-2 validation constructor coverage, and featurizer pre-allocation correctness
 - GitHub Actions CI with CPU runners (every push/PR) and GPU T4 runners (push to main)
 
 ## Contributing
