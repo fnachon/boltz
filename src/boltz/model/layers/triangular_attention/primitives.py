@@ -207,12 +207,12 @@ def _attention_sdpa(
     """Memory-efficient attention using PyTorch SDPA (FlashAttention-2 backend).
 
     Accepts q/k/v in shape [*, H, Q/K, C_hidden] (same as ``_attention``).
-    Biases must broadcast to [*, H, Q, K].
+    Biases may be broadcast-shaped tensors that expand to [*, H, Q, K].
 
-    The q tensor has already been pre-scaled by 1/sqrt(c_hidden) in
-    ``_prep_qkv``, so we pass ``scale=1.0`` to SDPA to avoid double-scaling.
+    The q tensor is pre-scaled by 1/sqrt(c_hidden) before being passed here,
+    so we use scale=1.0 in SDPA to avoid double-scaling.
     """
-    # Flatten all batch dimensions into one so SDPA sees a plain 4-D tensor.
+    # Flatten all leading batch dimensions into one so SDPA sees a 4-D tensor.
     *batch_dims, H, N_q, D = query.shape
     N_k = key.shape[-2]
     B_eff = math.prod(batch_dims) if batch_dims else 1
@@ -221,13 +221,18 @@ def _attention_sdpa(
     k = key.reshape(B_eff, H, N_k, D)
     v = value.reshape(B_eff, H, N_k, D)
 
-    # Sum all additive bias tensors; broadcast handles the various shapes.
+    # Biases may have broadcast shapes (e.g. (B, I, 1, 1, J) for a mask or
+    # (B, 1, H, I, J) for the triangle bias).  Sum them first while allowing
+    # PyTorch to handle the broadcasting, then reshape the fully-expanded
+    # result to (B_eff, H, N_q, N_k) for SDPA.
     attn_bias: Optional[torch.Tensor] = None
-    for b in biases:
-        b_flat = b.reshape(B_eff, H, N_q, N_k) if b.numel() > 1 else b
-        attn_bias = b_flat if attn_bias is None else attn_bias + b_flat
+    if biases:
+        combined = biases[0]
+        for b in biases[1:]:
+            combined = combined + b          # broadcast sum over all biases
+        attn_bias = combined.reshape(B_eff, H, N_q, N_k)
 
-    # scale=1.0 because q is already divided by sqrt(c_hidden) in _prep_qkv.
+    # scale=1.0 because q is already divided by sqrt(c_hidden).
     o = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_bias, scale=1.0)
     return o.reshape(*batch_dims, H, N_q, D)
 
