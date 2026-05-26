@@ -1046,6 +1046,17 @@ def cli() -> None:
     help="Whether to disable the kernels. Default False",
 )
 @click.option(
+    "--flash_attn",
+    is_flag=True,
+    help=(
+        "Enable PyTorch scaled_dot_product_attention (FlashAttention-2 / "
+        "memory-efficient attention) for all attention layers. "
+        "Requires an Ampere (sm_80+) or newer GPU and PyTorch ≥ 2.0. "
+        "Provides O(N) memory usage vs O(N²) and significant throughput gains "
+        "on large sequences. Default False."
+    ),
+)
+@click.option(
     "--write_embeddings",
     is_flag=True,
     help=" to dump the s and z embeddings into a npz file. Default is False.",
@@ -1087,6 +1098,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     subsample_msa: bool = True,
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
+    flash_attn: bool = False,
     write_embeddings: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
@@ -1330,6 +1342,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             diffusion_process_args=asdict(diffusion_params),
             ema=False,
             use_kernels=not no_kernels,
+            use_flash_attn=flash_attn,
             pairformer_args=asdict(pairformer_args),
             msa_args=asdict(msa_args),
             steering_args=asdict(steering_args),
