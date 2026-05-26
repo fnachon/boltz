@@ -67,6 +67,7 @@ class PairformerLayer(nn.Module):
         use_kernels: bool = False,
         use_cuequiv_mul: bool = False,
         use_cuequiv_attn: bool = False,
+        use_flash_attn: bool = False,
     ) -> tuple[Tensor, Tensor]:
         # Compute pairwise stack
         dropout = get_dropout_mask(self.dropout, z, self.training)
@@ -85,6 +86,7 @@ class PairformerLayer(nn.Module):
             mask=pair_mask,
             chunk_size=chunk_size_tri_attn,
             use_kernels=use_cuequiv_attn or use_kernels,
+            use_flash_attn=use_flash_attn,
         )
 
         dropout = get_dropout_mask(self.dropout, z, self.training, columnwise=True)
@@ -93,18 +95,29 @@ class PairformerLayer(nn.Module):
             mask=pair_mask,
             chunk_size=chunk_size_tri_attn,
             use_kernels=use_cuequiv_attn or use_kernels,
+            use_flash_attn=use_flash_attn,
         )
 
         z = z + self.transition_z(z)
 
         # Compute sequence stack
-        with torch.autocast(autocast_device_type(s.device.type), enabled=False):
-            s_normed = self.pre_norm_s(s.float())
-            s = s.float() + self.attention(
-                s=s_normed, z=z.float(), mask=mask.float(), k_in=s_normed
+        if use_flash_attn:
+            # SDPA operates in the model's native dtype (bf16/fp16); no forced
+            # float32 cast required — FlashAttention handles numerics internally.
+            s_normed = self.pre_norm_s(s)
+            s = s + self.attention(
+                s=s_normed, z=z, mask=mask, k_in=s_normed, use_flash_attn=True
             )
             s = s + self.transition_s(s)
             s = self.s_post_norm(s)
+        else:
+            with torch.autocast(autocast_device_type(s.device.type), enabled=False):
+                s_normed = self.pre_norm_s(s.float())
+                s = s.float() + self.attention(
+                    s=s_normed, z=z.float(), mask=mask.float(), k_in=s_normed
+                )
+                s = s + self.transition_s(s)
+                s = self.s_post_norm(s)
 
         return s, z
 
@@ -154,6 +167,7 @@ class PairformerModule(nn.Module):
         mask: Tensor,
         pair_mask: Tensor,
         use_kernels: bool = False,
+        use_flash_attn: bool = False,
     ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
@@ -168,7 +182,9 @@ class PairformerModule(nn.Module):
         pair_mask : Tensor
             The pairwise mask.
         use_kernels : bool
-            Whether to use kernels.
+            Whether to use cuequivariance kernels.
+        use_flash_attn : bool
+            Whether to use PyTorch SDPA (FlashAttention-2) backend.
 
         """
         if not self.training:
@@ -189,9 +205,15 @@ class PairformerModule(nn.Module):
                     pair_mask,
                     chunk_size_tri_attn,
                     use_kernels,
+                    False,  # use_cuequiv_mul
+                    False,  # use_cuequiv_attn
+                    use_flash_attn,
                 )
             else:
-                s, z = layer(s, z, mask, pair_mask, chunk_size_tri_attn, use_kernels)
+                s, z = layer(
+                    s, z, mask, pair_mask, chunk_size_tri_attn,
+                    use_kernels, False, False, use_flash_attn,
+                )
         return s, z
 
 
@@ -231,6 +253,7 @@ class PairformerNoSeqLayer(nn.Module):
         use_kernels: bool = False,
         use_cuequiv_mul: bool = False,
         use_cuequiv_attn: bool = False,
+        use_flash_attn: bool = False,
     ) -> Tensor:
         # Compute pairwise stack
         dropout = get_dropout_mask(self.dropout, z, self.training)
@@ -249,6 +272,7 @@ class PairformerNoSeqLayer(nn.Module):
             mask=pair_mask,
             chunk_size=chunk_size_tri_attn,
             use_kernels=use_cuequiv_attn or use_kernels,
+            use_flash_attn=use_flash_attn,
         )
 
         dropout = get_dropout_mask(self.dropout, z, self.training, columnwise=True)
@@ -257,6 +281,7 @@ class PairformerNoSeqLayer(nn.Module):
             mask=pair_mask,
             chunk_size=chunk_size_tri_attn,
             use_kernels=use_cuequiv_attn or use_kernels,
+            use_flash_attn=use_flash_attn,
         )
 
         z = z + self.transition_z(z)
@@ -301,6 +326,7 @@ class PairformerNoSeqModule(nn.Module):
         z: Tensor,
         pair_mask: Tensor,
         use_kernels: bool = False,
+        use_flash_attn: bool = False,
     ) -> Tensor:
         if not self.training:
             if z.shape[1] > const.chunk_size_threshold:
@@ -318,6 +344,9 @@ class PairformerNoSeqModule(nn.Module):
                     pair_mask,
                     chunk_size_tri_attn,
                     use_kernels,
+                    False,  # use_cuequiv_mul
+                    False,  # use_cuequiv_attn
+                    use_flash_attn,
                 )
             else:
                 z = layer(
@@ -325,5 +354,8 @@ class PairformerNoSeqModule(nn.Module):
                     pair_mask,
                     chunk_size_tri_attn,
                     use_kernels,
+                    False,  # use_cuequiv_mul
+                    False,  # use_cuequiv_attn
+                    use_flash_attn,
                 )
         return z

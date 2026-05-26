@@ -265,6 +265,7 @@ class TemplateModule(nn.Module):
         feats: dict[str, Tensor],
         pair_mask: Tensor,
         use_kernels: bool = False,
+        use_flash_attn: bool = False,
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -276,6 +277,10 @@ class TemplateModule(nn.Module):
             Input features
         pair_mask : Tensor
             The pair mask
+        use_kernels : bool
+            Whether to use cuequivariance kernels
+        use_flash_attn : bool
+            Whether to use PyTorch SDPA (FlashAttention-2) backend
 
         Returns
         -------
@@ -345,7 +350,9 @@ class TemplateModule(nn.Module):
         # Compute input projections
         v = self.z_proj(self.z_norm(z[:, None])) + a_tij
         v = v.view(B * T, *v.shape[2:])
-        v = v + self.pairformer(v, pair_mask, use_kernels=use_kernels)
+        v = v + self.pairformer(
+            v, pair_mask, use_kernels=use_kernels, use_flash_attn=use_flash_attn
+        )
         v = self.v_norm(v)
         v = v.view(B, T, *v.shape[1:])
 
@@ -415,6 +422,7 @@ class TemplateV2Module(nn.Module):
         feats: dict[str, Tensor],
         pair_mask: Tensor,
         use_kernels: bool = False,
+        use_flash_attn: bool = False,
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -426,6 +434,10 @@ class TemplateV2Module(nn.Module):
             Input features
         pair_mask : Tensor
             The pair mask
+        use_kernels : bool
+            Whether to use cuequivariance kernels
+        use_flash_attn : bool
+            Whether to use PyTorch SDPA (FlashAttention-2) backend
 
         Returns
         -------
@@ -496,7 +508,9 @@ class TemplateV2Module(nn.Module):
         # Compute input projections
         v = self.z_proj(self.z_norm(z[:, None])) + a_tij
         v = v.view(B * T, *v.shape[2:])
-        v = v + self.pairformer(v, pair_mask, use_kernels=use_kernels)
+        v = v + self.pairformer(
+            v, pair_mask, use_kernels=use_kernels, use_flash_attn=use_flash_attn
+        )
         v = self.v_norm(v)
         v = v.view(B, T, *v.shape[1:])
 
@@ -571,6 +585,7 @@ class MSAModule(nn.Module):
         emb: Tensor,
         feats: dict[str, Tensor],
         use_kernels: bool = False,
+        use_flash_attn: bool = False,
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -584,6 +599,8 @@ class MSAModule(nn.Module):
             Input features
         use_kernels: bool
             Whether to use kernels for triangular updates
+        use_flash_attn : bool
+            Whether to use PyTorch SDPA (FlashAttention-2) backend
 
         Returns
         -------
@@ -653,6 +670,7 @@ class MSAModule(nn.Module):
                     chunk_size_outer_product,
                     chunk_size_tri_attn,
                     use_kernels,
+                    use_flash_attn,
                 )
             else:
                 z, m = self.layers[i](
@@ -666,6 +684,7 @@ class MSAModule(nn.Module):
                     chunk_size_outer_product,
                     chunk_size_tri_attn,
                     use_kernels,
+                    use_flash_attn,
                 )
         return z
 
@@ -724,6 +743,7 @@ class MSALayer(nn.Module):
         chunk_size_outer_product: int = None,
         chunk_size_tri_attn: int = None,
         use_kernels: bool = False,
+        use_flash_attn: bool = False,
     ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
@@ -753,7 +773,8 @@ class MSALayer(nn.Module):
 
         # Compute pairwise stack
         z = self.pairformer_layer(
-            z, token_mask, chunk_size_tri_attn, use_kernels=use_kernels
+            z, token_mask, chunk_size_tri_attn,
+            use_kernels=use_kernels, use_flash_attn=use_flash_attn,
         )
 
         return z, m

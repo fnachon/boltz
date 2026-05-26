@@ -1,6 +1,7 @@
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 from einops.layers.torch import Rearrange
 from torch import Tensor, nn
 
@@ -67,6 +68,7 @@ class AttentionPairBias(nn.Module):
         mask: Tensor,
         k_in: Tensor,
         multiplicity: int = 1,
+        use_flash_attn: bool = False,
     ) -> Tensor:
         """Forward pass.
 
@@ -97,15 +99,31 @@ class AttentionPairBias(nn.Module):
 
         g = self.proj_g(s).sigmoid()
 
-        with torch.autocast(autocast_device_type(q.device.type), enabled=False):
-            # Compute attention weights
-            attn = torch.einsum("bihd,bjhd->bhij", q.float(), k.float())
-            attn = attn / (self.head_dim**0.5) + bias.float()
-            attn = attn + (1 - mask[:, None, None].float()) * -self.inf
-            attn = attn.softmax(dim=-1)
+        if use_flash_attn:
+            # PyTorch SDPA path: uses FlashAttention-2 / memory-efficient attn
+            # automatically on supported hardware; O(N) memory vs O(N²).
+            # q/k/v are (B, N, H, D) → transpose to (B, H, N, D) for SDPA.
+            q_s = q.transpose(1, 2)
+            k_s = k.transpose(1, 2)
+            v_s = v.transpose(1, 2)
+            # Build additive bias: pair bias + padding mask
+            attn_bias = bias + (1.0 - mask[:, None, None].to(bias.dtype)) * -self.inf
+            o = F.scaled_dot_product_attention(
+                q_s, k_s, v_s,
+                attn_mask=attn_bias,
+                scale=self.head_dim ** -0.5,
+            )
+            o = o.transpose(1, 2)
+        else:
+            with torch.autocast(autocast_device_type(q.device.type), enabled=False):
+                # Compute attention weights
+                attn = torch.einsum("bihd,bjhd->bhij", q.float(), k.float())
+                attn = attn / (self.head_dim**0.5) + bias.float()
+                attn = attn + (1 - mask[:, None, None].float()) * -self.inf
+                attn = attn.softmax(dim=-1)
 
-            # Compute output
-            o = torch.einsum("bhij,bjhd->bihd", attn, v.float()).to(v.dtype)
+                # Compute output
+                o = torch.einsum("bhij,bjhd->bihd", attn, v.float()).to(v.dtype)
         o = o.reshape(B, -1, self.c_s)
         o = self.proj_o(g * o)
 
