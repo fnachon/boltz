@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import math
+import warnings
 from typing import Callable, List, Optional, Tuple
 
 import torch
@@ -243,6 +244,43 @@ def kernel_triangular_attn(q, k, v, tri_bias, mask, scale):
     return triangle_attention(q, k, v, tri_bias, mask=mask, scale=scale)
 
 
+# Once the cuequivariance triangle attention op fails, skip the kernel path for
+# the rest of the process to avoid repeatedly raising and warning on the same
+# unavailable op.
+_kernel_failure = {"reason": None}
+
+
+def _is_recoverable_kernel_error(error: Exception) -> bool:
+    if isinstance(error, ImportError):
+        return True
+    msg = str(error)
+    return (
+        "triangle_attention" in msg
+        and (
+            "Failed to import Triton-based component" in msg
+            or "Not Supported" in msg
+        )
+    )
+
+
+def _kernel_or_none(**kwargs: object) -> Optional[torch.Tensor]:
+    if _kernel_failure["reason"] is not None:
+        return None
+    try:
+        return kernel_triangular_attn(**kwargs)
+    except Exception as error:  # noqa: BLE001
+        if not _is_recoverable_kernel_error(error):
+            raise
+        _kernel_failure["reason"] = str(error)
+        warnings.warn(
+            "Triangle attention kernels are unavailable; falling back to "
+            f"the PyTorch implementation. Kernel error: {_kernel_failure['reason']}",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+        return None
+
+
 class Attention(nn.Module):
     """
     Standard multi-head attention using AlphaFold's default layer
@@ -388,27 +426,32 @@ class Attention(nn.Module):
         apply_scale = not use_kernels
         q, k, v = self._prep_qkv(q_x, kv_x, apply_scale=apply_scale)
 
+        o = None
         if use_kernels:
             scale = 1.0 / math.sqrt(self.c_hidden)
-            o = kernel_triangular_attn(
-                q,
-                k,
-                v,
+            o = _kernel_or_none(
+                q=q,
+                k=k,
+                v=v,
                 tri_bias=tri_bias,
                 mask=mask.bool(),
                 scale=scale,
             )
-            o = o.transpose(-2, -3)
-        elif use_sdpa:
-            # q is already pre-scaled (divide by sqrt(c_hidden) in _prep_qkv),
-            # so we pass scale=1.0 to SDPA to avoid double-scaling.
+            if o is None:
+                # Kernel unavailable: q was not pre-scaled, so apply scale now
+                # before falling back to the PyTorch path.
+                q = q * scale
+
+        if o is None:
             biases = [mask_bias, tri_bias]
-            o = _attention_sdpa(q, k, v, biases)
-            o = o.transpose(-2, -3)
-        else:
-            biases = [mask_bias, tri_bias]
-            o = _attention(q, k, v, biases)
-            o = o.transpose(-2, -3)
+            if use_sdpa:
+                # q is pre-scaled (either by _prep_qkv when use_kernels=False,
+                # or by the fallback branch above), so pass scale=1.0 in SDPA.
+                o = _attention_sdpa(q, k, v, biases)
+            else:
+                o = _attention(q, k, v, biases)
+
+        o = o.transpose(-2, -3)
 
         o = self._wrap_up(o, q_x)
 

@@ -49,6 +49,7 @@ Community-maintained fork of [Boltz](https://github.com/jwohlwend/boltz) with bu
 - Fixed CPU inference producing distorted structures with wrong bond lengths — Boltz-2 was incorrectly using `bf16-mixed` precision on CPU; now forces float32 ([#653](https://github.com/jwohlwend/boltz/issues/653))
 - Fixed missing PAE summaries in `confidence_*.json` — aggregated `complex_pae`, `complex_ipae`, `chains_pae`, and `pair_chains_pae` are now included, remain available with `--no_write_full_pae`, use contact-weighted aggregation like PDE, and write undefined values as `null` ([#607](https://github.com/jwohlwend/boltz/issues/607))
 - Fixed cuequivariance triangle multiplication kernel crashes by falling back to PyTorch when kernels are unavailable or unsupported ([#485](https://github.com/jwohlwend/boltz/issues/485), with thanks to [#682](https://github.com/jwohlwend/boltz/pull/682))
+- Fixed cuequivariance triangle attention kernel crashes by falling back to PyTorch when kernels are unavailable or unsupported — extends the v2.10.3 fix to the triangle attention path that was missed ([#485](https://github.com/jwohlwend/boltz/issues/485))
 - Fixed forced contact restraints losing all signal when union weighting underflowed for large distance violations ([#621](https://github.com/jwohlwend/boltz/issues/621), with thanks to [#682](https://github.com/jwohlwend/boltz/pull/682))
 - Fixed incorrect contact-union gradient sign so soft-OR contact restraints apply gradient pressure with the correct magnitude across union members
 - Fixed diffusion sampling ignoring `--max_parallel_samples` in divisible cases (for example `10` samples with a parallel limit of `5`), which could batch everything into one large chunk and trigger avoidable OOMs
@@ -64,6 +65,7 @@ Community-maintained fork of [Boltz](https://github.com/jwohlwend/boltz) with bu
 - Added `--batch_size` for Boltz-2 structure inference so multiple inputs can be processed per prediction batch. Current limits: affinity prediction remains single-record (`batch_size=1`), and guided inference (`--use_potentials` / contact guidance) is only supported with `--batch_size 1`
 
 **Performance improvements:**
+- Added optional FlashAttention-2 / PyTorch SDPA acceleration for triangle attention and pair-biased attention via `--flash_attn` (off by default). Reduces attention memory footprint and speeds up inference on Ampere+ GPUs while remaining numerically equivalent to the manual einsum path within float-precision tolerance (verified by parity tests)
 - Model weights now load directly to GPU instead of CPU-then-transfer
 - Cached molecule file reads and symmetry deserialization across samples
 - Removed dead O(n_tokens × n_chains) loop in pocket distance computation
