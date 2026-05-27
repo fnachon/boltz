@@ -201,3 +201,48 @@ properties:
                 len(residue) for residue in ligand_chain
             )
             assert atom_count > 0, "Ligand chain L1 has no atoms"
+
+
+@pytest.mark.slow
+def test_predict_flash_attn():
+    """Run boltz predict with --flash_attn and verify output.
+
+    Validates that the SDPA / FlashAttention-2 attention path produces a
+    well-formed prediction end-to-end. On Ampere+ GPUs PyTorch dispatches to
+    the FlashAttention-2 kernel; on pre-Ampere (e.g. T4) the model auto-disables
+    the flag at setup time and falls back to the standard path — so this test
+    also acts as a graceful-fallback smoke test.
+    """
+    input_yaml = """\
+version: 1
+sequences:
+  - protein:
+      id: A
+      sequence: ACDEFGHIKL
+      msa: empty
+"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result, pred_dir = _run_boltz_predict(
+            input_yaml, "test_flash_attn.yaml", tmpdir,
+            extra_args=["--flash_attn"],
+        )
+
+        assert result.returncode == 0, (
+            f"boltz predict --flash_attn failed:\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+        assert os.path.isdir(pred_dir), f"Predictions directory not found: {pred_dir}"
+
+        # Verify CIF structure output
+        cif_files = _find_files(pred_dir, ".cif")
+        assert len(cif_files) > 0, "No .cif output files found"
+        assert os.path.getsize(cif_files[0]) > 0, "CIF file is empty"
+
+        if gemmi is not None:
+            doc = gemmi.cif.read(cif_files[0])
+            assert len(doc) > 0, "CIF document has no data blocks"
+
+        # Verify confidence JSON output
+        json_files = _find_files(pred_dir, ".json")
+        assert len(json_files) > 0, "No confidence JSON files found"
