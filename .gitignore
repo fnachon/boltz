@@ -168,3 +168,4 @@ cython_debug/
 #   All result files generated from a boltz prediction call
 boltz_results_*/.idea/
 .idea/
+.claude/
