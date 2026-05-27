@@ -58,7 +58,8 @@ def bench_attention_pair_bias(N=512, B=1, C_s=384, C_z=128, H=16, device="cuda")
 
     s    = torch.randn(B, N, C_s, device=device, dtype=torch.bfloat16)
     z    = torch.randn(B, N, N, C_z, device=device, dtype=torch.bfloat16)
-    mask = torch.ones(B, N, N, device=device, dtype=torch.bfloat16)
+    # AttentionPairBias takes a 1-D per-token mask (B, N), not pairwise (B, N, N).
+    mask = torch.ones(B, N, device=device, dtype=torch.bfloat16)
 
     def run_std():
         with torch.no_grad():
