@@ -7,7 +7,12 @@ from unittest.mock import patch
 import click
 import pytest
 
-from boltz.main import _available_cpu_count, _validate_checkpoint_for_load, predict
+from boltz.main import (
+    _available_cpu_count,
+    _resolve_affinity_max_parallel_samples,
+    _validate_checkpoint_for_load,
+    predict,
+)
 
 
 class TestSubsampleMsaDefault:
@@ -337,3 +342,62 @@ class TestSkipBadInputsClickOption:
                 assert param.is_flag
                 return
         pytest.fail("skip_bad_inputs parameter not found on predict command")
+
+
+class TestAffinityMaxParallelSamples:
+    """Affinity diffusion honors the user's --max_parallel_samples.
+
+    Upstream hardcoded the affinity path's max_parallel_samples to 1, which
+    was silently masked by buggy chunking math that batched all samples
+    into one pass anyway. Our diffusion fix made that hardcode actually
+    take effect, forcing N sequential single-sample passes per record.
+    The helper now resolves the value from the CLI flag, capped at the
+    affinity diffusion sample count.
+    """
+
+    def test_default_cli_setting_batches_all_samples(self):
+        """Default --max_parallel_samples=5 plus default diffusion_samples_affinity=5
+        should produce a single batched pass (max == diffusion samples)."""
+        assert _resolve_affinity_max_parallel_samples(5, 5) == 5
+
+    def test_user_override_below_diffusion_samples_is_honored(self):
+        """A user passing a smaller --max_parallel_samples is respected."""
+        assert _resolve_affinity_max_parallel_samples(2, 5) == 2
+
+    def test_user_override_above_diffusion_samples_is_capped(self):
+        """A user passing a value larger than diffusion_samples_affinity is
+        capped so we don't claim to batch more samples than diffusion runs."""
+        assert _resolve_affinity_max_parallel_samples(50, 5) == 5
+
+    def test_single_sample_setting_is_preserved(self):
+        """Users explicitly asking for single-sample affinity get it."""
+        assert _resolve_affinity_max_parallel_samples(1, 5) == 1
+
+    def test_none_falls_back_to_diffusion_samples(self):
+        """Programmatic callers may pass max_parallel_samples=None to mean
+        'use multiplicity' (matching the diffusion code's own convention).
+        The helper must not blow up with TypeError from min(None, ...)."""
+        assert _resolve_affinity_max_parallel_samples(None, 5) == 5
+        assert _resolve_affinity_max_parallel_samples(None, 1) == 1
+
+    def test_predict_affinity_args_uses_helper_not_hardcoded_one(self):
+        """Regression guard: the source must not contain a hardcoded
+        max_parallel_samples=1 on the affinity predict_args path."""
+        from pathlib import Path
+
+        import boltz.main as main_module
+
+        source = Path(main_module.__file__).read_text()
+        affinity_block_start = source.index("predict_affinity_args = {")
+        affinity_block_end = source.index("}", affinity_block_start)
+        affinity_block = source[affinity_block_start:affinity_block_end]
+        assert "_resolve_affinity_max_parallel_samples" in affinity_block, (
+            "predict_affinity_args no longer routes max_parallel_samples "
+            "through _resolve_affinity_max_parallel_samples; if you removed "
+            "the helper, update or delete this regression test."
+        )
+        assert '"max_parallel_samples": 1' not in affinity_block, (
+            "predict_affinity_args has reverted to hardcoding "
+            "max_parallel_samples=1; this regresses the affinity path to "
+            "N sequential single-sample forward passes."
+        )

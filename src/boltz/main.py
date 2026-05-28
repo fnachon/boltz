@@ -119,6 +119,32 @@ def _available_cpu_count() -> int:
         return os.cpu_count() or 1
 
 
+def _resolve_affinity_max_parallel_samples(
+    max_parallel_samples: Optional[int],
+    diffusion_samples_affinity: int,
+) -> int:
+    """Resolve max_parallel_samples for the affinity diffusion path.
+
+    Upstream hardcoded this to 1, which was silently a no-op under upstream's
+    buggy chunking math (``chunk(multiplicity % max + 1)`` collapsed to
+    ``chunk(1)`` and batched all samples into one pass). Our diffusion fix
+    made the hardcode actually take effect, which forced N sequential
+    single-sample forward passes per record — an avoidable ~Nx slowdown.
+
+    We now honor the user's ``--max_parallel_samples``, capped at the number
+    of affinity diffusion samples so the default cleanly batches all samples
+    in one pass without inflating the work above what diffusion will run.
+
+    ``max_parallel_samples=None`` is treated the same way the diffusion code
+    treats it ("use multiplicity") — i.e. batch all affinity samples in one
+    pass. The Click CLI default is 5, so this branch is only reached by
+    programmatic callers of ``predict.callback(...)`` that pass ``None``.
+    """
+    if max_parallel_samples is None:
+        return diffusion_samples_affinity
+    return min(max_parallel_samples, diffusion_samples_affinity)
+
+
 @dataclass
 class BoltzProcessedInput:
     """Processed input data."""
@@ -1769,7 +1795,10 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             "recycling_steps": 5,
             "sampling_steps": sampling_steps_affinity,
             "diffusion_samples": diffusion_samples_affinity,
-            "max_parallel_samples": 1,
+            "max_parallel_samples": _resolve_affinity_max_parallel_samples(
+                max_parallel_samples,
+                diffusion_samples_affinity,
+            ),
             "write_confidence_summary": False,
             "write_full_pae": False,
             "write_full_pde": False,
