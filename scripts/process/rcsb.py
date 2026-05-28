@@ -10,11 +10,13 @@ from typing import Any, Optional
 
 import numpy as np
 import rdkit
+from cluster import hash_sequence
 from mmcif import parse_mmcif
 from p_tqdm import p_umap
 from redis import Redis
 from tqdm import tqdm
 
+from boltz.data import const
 from boltz.data.filter.static.filter import StaticFilter
 from boltz.data.filter.static.ligand import ExcludedLigands
 from boltz.data.filter.static.polymer import (
@@ -126,26 +128,48 @@ def parse(data: PDB, resource: Resource, clusters: dict) -> Target:
         The processed data.
 
     """
-    # Get the PDB id
-    pdb_id = data.id.lower()
-
     # Parse structure
     parsed = parse_mmcif(data.path, resource)
     structure = parsed.data
     structure_info = parsed.info
 
     # Create chain metadata
+    protein_id = const.chain_type_ids["PROTEIN"]
+    nonpolymer_id = const.chain_type_ids["NONPOLYMER"]
     chain_info = []
     for i, chain in enumerate(structure.chains):
-        key = f"{pdb_id}_{chain['entity_id']}"
+        mol_type = int(chain["mol_type"])
+        subchain = str(chain["name"])
+
+        # Resolve the cluster / MSA key the same way cluster.py keys its output:
+        # polymers are hashed by their 1-letter sequence, and ligands by their
+        # CCD code (cluster.py:62-77). Without this, every chain previously fell
+        # through to cluster_id=-1.
+        sequence = parsed.chain_to_seq.get(subchain)
+        if sequence is not None:
+            cluster_key = hash_sequence(sequence)
+            msa_id = hash_sequence(sequence) if mol_type == protein_id else ""
+        elif mol_type == nonpolymer_id:
+            # Ligand chain: use the first residue's CCD code. The clusters dict
+            # was already lowercased at load time (see process()), so match it.
+            res_start = int(chain["res_idx"])
+            cluster_key = str(structure.residues[res_start]["name"]).lower()
+            msa_id = ""
+        else:
+            cluster_key = None
+            msa_id = ""
+
+        cluster_id = clusters.get(cluster_key, -1) if cluster_key is not None else -1
+
         chain_info.append(
             ChainInfo(
                 chain_id=i,
-                chain_name=chain["name"],
-                msa_id="",  # FIX
-                mol_type=int(chain["mol_type"]),
-                cluster_id=clusters.get(key, -1),
+                chain_name=subchain,
+                msa_id=msa_id,
+                mol_type=mol_type,
+                cluster_id=cluster_id,
                 num_residues=int(chain["res_num"]),
+                entity_id=int(chain["entity_id"]),
             )
         )
 

@@ -1,5 +1,5 @@
 import contextlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 import gemmi
@@ -94,6 +94,10 @@ class ParsedStructure:
     data: Structure
     info: StructureInfo
     covalents: list[int]
+    # Subchain name -> 1-letter sequence for polymer chains. Non-polymer chains
+    # are absent. Used by downstream preprocessing to compute the same per-chain
+    # cluster / MSA key that scripts/process/cluster.py emits.
+    chain_to_seq: dict[str, str] = field(default_factory=dict)
 
 
 ####################################################################################################
@@ -905,7 +909,7 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
 
     # Parse chains
     chains: list[ParsedChain] = []
-    chain_seqs = []
+    chain_to_seq: dict[str, str] = {}
     for raw_chain in structure[0].subchains():
         # Check chain type
         subchain_id = raw_chain.subchain_id()
@@ -933,7 +937,8 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
             )
             if parsed_polymer is not None:
                 chains.append(parsed_polymer)
-                chain_seqs.append(parsed_polymer.sequence)
+                if parsed_polymer.sequence is not None:
+                    chain_to_seq[parsed_polymer.name] = parsed_polymer.sequence
 
         # Parse a non-polymer
         elif entity_type in {"NonPolymer", "Branched"}:
@@ -1120,4 +1125,9 @@ def parse_mmcif(  # noqa: C901, PLR0915, PLR0912
         mask=mask,
     )
 
-    return ParsedStructure(data=data, info=info, covalents=[])
+    return ParsedStructure(
+        data=data,
+        info=info,
+        covalents=[],
+        chain_to_seq=chain_to_seq,
+    )
