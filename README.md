@@ -61,6 +61,7 @@ Community-maintained fork of [Boltz](https://github.com/jwohlwend/boltz) with bu
 - Fixed affinity prediction running 5× slower than necessary: upstream hardcoded `max_parallel_samples=1` for the affinity diffusion path, which was silently masked by upstream's buggy `chunk(multiplicity % max + 1)` math (the divisible case collapsed to `chunk(1)`, batching all samples in one pass). When our earlier diffusion fix replaced that with the correct `split(max_parallel_samples)`, the hardcoded `1` started to actually take effect, forcing N sequential single-sample forward passes per affinity record. The affinity path now honors the user's `--max_parallel_samples`, capped at `--diffusion_samples_affinity` so it doesn't claim more parallelism than diffusion will run.
 
 **Improvements:**
+- Published to PyPI as [`boltz-community`](https://pypi.org/project/boltz-community/) — `pip install boltz-community` and `uv add boltz-community` now work without the git URL ([#12](https://github.com/Novel-Therapeutics/boltz-community/issues/12)). Releases are tag-driven via GitHub Actions + PyPI Trusted Publisher (OIDC, no long-lived tokens).
 - Added `--skip_bad_inputs` flag: by default `boltz predict` now aborts when any input fails processing; pass `--skip_bad_inputs` to skip bad inputs and continue with the rest
 - Deferred heavy imports (torch, rdkit, pytorch-lightning) so `boltz.main` loads instantly for CLI help and input validation
 - `--devices` now accepts a comma-separated list of specific GPU device IDs in addition to a device count (e.g. `--devices 0,1` targets GPUs 0 and 1; use `CUDA_VISIBLE_DEVICES=1 boltz predict ...` to target a single GPU by index)
@@ -85,19 +86,31 @@ Pull requests are welcome! If you have a bug fix, test improvement, or compatibi
 
 ## Installation
 
-Install from GitHub:
+Install from PyPI:
 
 ```
-pip install "boltz-community @ git+https://github.com/Novel-Therapeutics/boltz-community.git"
+pip install boltz-community
 ```
 
 With CUDA kernels:
 
 ```
-pip install "boltz-community[cuda] @ git+https://github.com/Novel-Therapeutics/boltz-community.git"
+pip install "boltz-community[cuda]"
 ```
 
-If you are installing on CPU-only or non-CUDA GPU hardware, use the first command without `[cuda]`. Note that the CPU version is significantly slower than the GPU version.
+`uv` works the same way:
+
+```
+uv add boltz-community            # or: uv add "boltz-community[cuda]"
+```
+
+If you are installing on CPU-only or non-CUDA GPU hardware, omit `[cuda]`. Note that the CPU version is significantly slower than the GPU version.
+
+### Installing the bleeding-edge `main` branch
+
+```
+pip install "boltz-community @ git+https://github.com/Novel-Therapeutics/boltz-community.git"
+```
 
 ### Apple Silicon (MPS)
 
