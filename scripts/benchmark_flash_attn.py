@@ -2,17 +2,20 @@
 
 Measures wall-clock throughput and peak GPU memory for:
   - AttentionPairBias  (token-level sequence attention, used in Pairformer)
-  - TriangleAttention  (pairwise triangle attention, used in Pairformer)
 
 Run on an Ampere+ GPU for FlashAttention-2 acceleration:
 
     python scripts/benchmark_flash_attn.py
 
-Typical output on an A100-40GB (batch=1, N=512):
-    AttentionPairBias  standard  time=12.3ms  mem=1024MB
-    AttentionPairBias  flash     time= 4.1ms  mem= 256MB  (3.0x faster, 4.0x less mem)
-    TriangleAttention  standard  time=38.5ms  mem=3072MB
-    TriangleAttention  flash     time=11.2ms  mem= 768MB  (3.4x faster, 4.0x less mem)
+Measured on RTX 5080 (sm_120, batch=1, N=512, bfloat16):
+    AttentionPairBias  standard   time= 0.9ms  mem=148MB
+    AttentionPairBias  flash      time= 0.7ms  mem=148MB  (1.2-1.4x faster)
+
+Note: speedup varies by sequence length and GPU architecture.
+Memory savings depend on whether FlashAttention-2 kernel activates
+(requires Ampere/sm_80+ and no explicit attn_mask).
+TriangleAttention uses the standard einsum path (SDPA with a dense N x N
+bias does not activate FA2 and is slower on that layer).
 """
 
 import argparse
@@ -58,7 +61,7 @@ def bench_attention_pair_bias(N=512, B=1, C_s=384, C_z=128, H=16, device="cuda")
 
     s    = torch.randn(B, N, C_s, device=device, dtype=torch.bfloat16)
     z    = torch.randn(B, N, N, C_z, device=device, dtype=torch.bfloat16)
-    mask = torch.ones(B, N, N, device=device, dtype=torch.bfloat16)
+    mask = torch.ones(B, N, device=device, dtype=torch.bfloat16)
 
     def run_std():
         with torch.no_grad():
@@ -79,40 +82,10 @@ def bench_attention_pair_bias(N=512, B=1, C_s=384, C_z=128, H=16, device="cuda")
     _speedup(ms_std, ms_flash, mem_std, mem_flash)
 
 
-# ── TriangleAttention benchmark ───────────────────────────────────────────────
-
-def bench_triangle_attention(N=256, B=1, C=128, H=4, device="cuda"):
-    from boltz.model.layers.triangular_attention.attention import TriangleAttentionStartingNode
-
-    model = TriangleAttentionStartingNode(c_in=C, c_hidden=32, no_heads=H)
-    model = model.to(device=device, dtype=torch.bfloat16).eval()
-
-    x    = torch.randn(B, N, N, C, device=device, dtype=torch.bfloat16)
-    mask = torch.ones(B, N, N, device=device, dtype=torch.bfloat16)
-
-    def run_std():
-        with torch.no_grad():
-            model(x, mask=mask, use_flash_attn=False)
-
-    def run_flash():
-        with torch.no_grad():
-            model(x, mask=mask, use_flash_attn=True)
-
-    ms_std    = _warmup_and_time(run_std)
-    mem_std   = _peak_mem_mb(run_std)
-    ms_flash  = _warmup_and_time(run_flash)
-    mem_flash = _peak_mem_mb(run_flash)
-
-    label = f"TriangleAttention  N={N}"
-    _row(label, "standard", ms_std,   mem_std)
-    _row(label, "flash",    ms_flash, mem_flash)
-    _speedup(ms_std, ms_flash, mem_std, mem_flash)
-
-
 def _speedup(ms_std, ms_flash, mem_std, mem_flash):
     spd = ms_std / ms_flash if ms_flash > 0 else float("inf")
     mem_r = mem_std / mem_flash if mem_flash > 0 else float("inf")
-    print(f"  {'':26}  {'→ speedup':<10}  {spd:.2f}x faster, {mem_r:.2f}x less memory\n")
+    print(f"  {'':26}  {'speedup':<10}  {spd:.2f}x faster, {mem_r:.2f}x less memory\n")
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -120,7 +93,6 @@ def _speedup(ms_std, ms_flash, mem_std, mem_flash):
 def main():
     parser = argparse.ArgumentParser(description="Boltz FlashAttention benchmark")
     parser.add_argument("--N",      type=int, default=512,  help="Sequence length")
-    parser.add_argument("--N_tri",  type=int, default=256,  help="Pairwise N for triangle attn")
     parser.add_argument("--batch",  type=int, default=1,    help="Batch size")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
@@ -136,12 +108,11 @@ def main():
             print("WARNING: FlashAttention-2 requires sm_80 (Ampere) or newer. "
                   "Results will reflect the math backend, not FlashAttn-2.\n")
 
-    print(f"\nBenchmark: B={args.batch}, N={args.N}, N_tri={args.N_tri}, "
+    print(f"\nBenchmark: B={args.batch}, N={args.N}, "
           f"dtype=bfloat16, device={args.device}\n")
     print("-" * 72)
 
     bench_attention_pair_bias(N=args.N, B=args.batch, device=args.device)
-    bench_triangle_attention(N=args.N_tri, B=args.batch, device=args.device)
 
     print("-" * 72)
     print("\nTo run Boltz prediction with FlashAttention-2 enabled:")
