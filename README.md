@@ -109,6 +109,34 @@ boltz predict input.yaml --accelerator mps --use_msa_server
 
 MPS mode automatically uses float32 precision and single-device execution. Performance is slower than CUDA but significantly faster than CPU.
 
+## Releasing
+
+Releases are tag-driven. Pushing a `v*.*.*` tag triggers [.github/workflows/release.yml](.github/workflows/release.yml), which builds the sdist + wheel, validates them with `twine check`, and publishes to PyPI via [PyPI Trusted Publisher](https://docs.pypi.org/trusted-publishers/) (OIDC) — no long-lived API token is stored in this repo.
+
+### One-time setup (PyPI side)
+
+1. Register the `boltz-community` package on PyPI (create as a new project; the name is currently available).
+2. Open the project's *Publishing* settings and add a Trusted Publisher with:
+   - **Owner:** `Novel-Therapeutics`
+   - **Repository:** `boltz-community`
+   - **Workflow filename:** `release.yml`
+   - **Environment:** `pypi`
+3. In the GitHub repo Settings → Environments, create an environment named `pypi`. Optionally add a required-reviewer rule so a publish has to be approved by a maintainer before the OIDC exchange runs.
+
+### Per-release flow
+
+1. Land all changes on `main`.
+2. Bump `version` in [pyproject.toml](pyproject.toml).
+3. Add a bullet under *Bug fixes* / *Improvements* / *Performance improvements* in this README. Update the test count if new tests landed.
+4. Commit as `Release X.Y.Z` and push `main`.
+5. Tag the release commit: `git tag -a vX.Y.Z -m "Release X.Y.Z" && git push origin vX.Y.Z`.
+6. The release workflow builds, checks, and publishes the artifacts to PyPI. Watch the run under the *Actions* tab.
+7. Create the GitHub release with the release notes (see prior releases for the *Highlights / Details / Commits since* structure).
+
+### Recovering from a failed publish
+
+PyPI rejects re-uploading the same version. If the build succeeded but the publish step failed (e.g. environment approval timed out), you can re-run the *Publish to PyPI* job from the Actions tab without re-tagging. If a version is published but broken, **bump the patch and ship a new release** — never delete or yank without a follow-up that supersedes it.
+
 ---
 
 *Everything below is from the upstream Boltz README.*
