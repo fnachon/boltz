@@ -101,7 +101,6 @@ class TriangleAttention(nn.Module):
             partial(
                 self.mha,
                 use_kernels=use_kernels,
-                use_sdpa=use_flash_attn,
             ),
             mha_inputs,
             chunk_size=chunk_size,
@@ -182,7 +181,6 @@ class TriangleAttention(nn.Module):
                 mask_bias,
                 mask,
                 use_kernels=use_kernels,
-                use_sdpa=use_flash_attn,
             )
 
         if not self.starting:
