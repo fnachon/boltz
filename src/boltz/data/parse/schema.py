@@ -1987,6 +1987,12 @@ def standardize(smiles: str) -> Optional[str]:
 
     # Standardize with ChEMBL data curation pipeline. During standardization, the molecule may be broken
     # Choose molecule with largest component
+    # Populate the implicit-valence cache before LargestFragmentChooser reads it.
+    # Without this, certain ligands (e.g. salts containing a terminal alkyne) trigger
+    # an uncatchable RDKit pre-condition abort during fragment selection:
+    #   'getNumImplicitHs() called without preceding call to calcImplicitValence()'
+    # which kills the entire prediction batch rather than just the offending input.
+    mol.UpdatePropertyCache(strict=False)
     mol = LARGEST_FRAGMENT_CHOOSER.choose(mol)
     # Standardize with ChEMBL data curation pipeline. During standardization, the molecule may be broken
     mol = standardize_mol(mol)
