@@ -77,7 +77,7 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
                 res = requests.post(
                     f"{host_url}/{submission_endpoint}",
                     data={"q": query, "mode": mode},
-                    timeout=6.02,
+                    timeout=300,
                     headers=headers,
                     auth=auth,
                 )
@@ -138,7 +138,7 @@ def run_mmseqs2(  # noqa: PLR0912, D103, C901, PLR0915
             try:
                 logger.debug(f"Downloading MSA results for ID: {ID}")
                 res = requests.get(
-                    f"{host_url}/result/download/{ID}", timeout=6.02, headers=headers, auth=auth
+                    f"{host_url}/result/download/{ID}", timeout=300, headers=headers, auth=auth
                 )
                 logger.debug(f"MSA download response status: {res.status_code}")
             except Exception as e:
