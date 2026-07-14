@@ -6,6 +6,7 @@ Community-maintained fork of [Boltz](https://github.com/jwohlwend/boltz) with bu
 
 **Compatibility:**
 - Apple Silicon (MPS) support: `boltz predict --accelerator mps`
+- Added `boltz-fix-macos-libomp` CLI to fix `OMP: Error #15` on macOS caused by multiple wheels (torch, scikit-learn) each bundling their own `libomp.dylib` — repoints the duplicates at a single canonical libomp via `install_name_tool` so only one OpenMP runtime is ever loaded, instead of silencing the safety check with `KMP_DUPLICATE_LIB_OK=TRUE` (which libomp's own docs warn is unsafe). Thanks to [@fnachon](https://github.com/Novel-Therapeutics/boltz-community/pull/15).
 - Dependency pins relaxed from `==` to `>=`
 - `fairscale` dependency removed — replaced with PyTorch built-in `torch.utils.checkpoint`
 - `numpy<2.0` cap removed
