@@ -126,14 +126,16 @@ MPS mode automatically uses float32 precision and single-device execution. Perfo
 
 Several wheels (torch, scikit-learn) bundle their own copy of `libomp.dylib`, and
 loading more than one OpenMP runtime into the same process crashes with an `OMP:
-Error` about libomp being initialized twice. If you hit that, repoint the duplicate
-copies at a single one (requires a local clone, since this reaches into installed
-package internals):
+Error` about libomp being initialized twice. The common workaround
+`KMP_DUPLICATE_LIB_OK=TRUE` silences the safety check but is officially unsafe
+per libomp's own warning text. Instead, repoint the duplicate copies at a single
+canonical libomp so only one is ever loaded:
 
 ```
-git clone https://github.com/Novel-Therapeutics/boltz-community.git
-python boltz-community/scripts/fix_macos_libomp.py
+boltz-fix-macos-libomp
 ```
+
+Safe to re-run and to run again after upgrading torch or scikit-learn.
 
 ## Releasing
 

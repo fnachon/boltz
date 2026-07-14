@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Repoint duplicate bundled libomp.dylib copies (torch, scikit-learn, ...) to a
 single canonical libomp.dylib so only one OpenMP runtime is ever loaded into the
 process. This is what actually causes the
@@ -8,16 +7,15 @@ process. This is what actually causes the
 
 crash on macOS -- several wheels each bundle their own copy of libomp.dylib, and
 loading more than one into the same process trips libomp's safety check. Rather
-than silencing that check with KMP_DUPLICATE_LIB_OK=TRUE, this makes sure there is
-only one libomp.dylib to load in the first place.
+than silencing that check with KMP_DUPLICATE_LIB_OK=TRUE (which the libomp docs
+themselves warn is unsafe), this makes sure there is only one libomp.dylib to
+load in the first place.
 
-Run once after installing boltz (pip install -e .):
-
-    python scripts/fix_macos_libomp.py
-
-Safe to re-run; already-canonical binaries are left untouched.
+Exposed as the ``boltz-fix-macos-libomp`` CLI entry point. Safe to re-run;
+already-canonical binaries are left untouched.
 """
 
+import os
 import subprocess
 import sys
 import sysconfig
@@ -25,7 +23,7 @@ from pathlib import Path
 
 
 def find_canonical(site_packages: Path) -> Path:
-    conda_prefix = subprocess.os.environ.get("CONDA_PREFIX")
+    conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
         candidate = Path(conda_prefix) / "lib" / "libomp.dylib"
         if candidate.exists():
@@ -59,6 +57,10 @@ def resolve(dep: str, loader_dir: Path) -> Path | None:
 
 
 def main() -> None:
+    if sys.platform != "darwin":
+        msg = "This script is only needed on macOS."
+        raise SystemExit(msg)
+
     site_packages = Path(sysconfig.get_paths()["purelib"])
     canonical = find_canonical(site_packages).resolve()
     print(f"Canonical libomp.dylib: {canonical}")
@@ -105,7 +107,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if sys.platform != "darwin":
-        msg = "This script is only needed on macOS."
-        raise SystemExit(msg)
     main()
