@@ -124,6 +124,17 @@ boltz predict input.yaml --accelerator mps --use_msa_server
 
 MPS mode automatically uses float32 precision and single-device execution. Performance is slower than CUDA but significantly faster than CPU.
 
+Several wheels (torch, scikit-learn) bundle their own copy of `libomp.dylib`, and
+loading more than one OpenMP runtime into the same process crashes with an `OMP:
+Error` about libomp being initialized twice. If you hit that, repoint the duplicate
+copies at a single one (requires a local clone, since this reaches into installed
+package internals):
+
+```
+git clone https://github.com/Novel-Therapeutics/boltz-community.git
+python boltz-community/scripts/fix_macos_libomp.py
+```
+
 ## Releasing
 
 Releases are tag-driven. Pushing a `v*.*.*` tag triggers [.github/workflows/release.yml](.github/workflows/release.yml), which builds the sdist + wheel, validates them with `twine check`, and publishes to PyPI via [PyPI Trusted Publisher](https://docs.pypi.org/trusted-publishers/) (OIDC) — no long-lived API token is stored in this repo.
